@@ -2,7 +2,7 @@ import { type LoadedMoney } from './types';
 
 function formatAmount(value: number | null): string {
   if (typeof value !== 'number') return 'N/A';
-  return value.toLocaleString('ja-JP');
+  return `${value.toLocaleString('ja-JP')} JPY`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

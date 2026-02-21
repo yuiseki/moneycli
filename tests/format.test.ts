@@ -62,5 +62,7 @@ test('formatMoneyReport supports legacy money_forward cache payloads', () => {
   const output = formatMoneyReport(loaded);
   expect(output).toContain('Source type: mf-dashboard-sqlite');
   expect(output).toContain('Source DB: /tmp/demo.db');
+  expect(output).toContain('Assets: 1,000 JPY');
+  expect(output).toContain('Liabilities: 500 JPY');
   expect(output).not.toContain('History URL:');
 });

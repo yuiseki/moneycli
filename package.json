@@ -1,0 +1,46 @@
+{
+  "name": "@yuiseki/moneycli",
+  "version": "0.1.0",
+  "description": "Money CLI with provider plugins and date-based cache",
+  "main": "dist/index.js",
+  "bin": {
+    "money": "dist/index.js",
+    "moneycli": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepack": "npm run build",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "money",
+    "cli",
+    "money-forward"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

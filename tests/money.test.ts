@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, expect, test } from 'vitest';
 import { loadMoney } from '../src/money';
 import { type MoneyProvider } from '../src/providers/types';
+import { saveCache } from '../src/storage';
 
 const tempRoots: string[] = [];
 
@@ -93,6 +94,53 @@ test('loadMoney fetches past date when sync is true', async () => {
     cacheDir,
     now: new Date(2026, 1, 21),
     forceSync: true,
+  });
+
+  expect(loaded.fromCache).toBe(false);
+  expect(callCount).toBe(1);
+});
+
+test('loadMoney ignores incompatible legacy cache for money_forward on today', async () => {
+  const cacheDir = createTempRoot();
+  const dateKey = '2026-02-21';
+  let callCount = 0;
+
+  saveCache(cacheDir, dateKey, 'money_forward', {
+    version: 1,
+    provider: 'money_forward',
+    dateKey,
+    fetchedAt: '2026-02-21T00:00:00.000Z',
+    data: {
+      kind: 'money_forward',
+      source: {
+        type: 'mf-dashboard-sqlite',
+        dbPath: '/tmp/demo.db',
+      },
+    },
+  });
+
+  const provider: MoneyProvider = {
+    name: 'money_forward',
+    description: 'money forward',
+    async fetch() {
+      callCount += 1;
+      return {
+        kind: 'money_forward',
+        source: {
+          type: 'money_forward_web',
+          cookiePath: '/tmp/cookies.json',
+          urls: {},
+        },
+        groups: [],
+      };
+    },
+  };
+
+  const loaded = await loadMoney({
+    provider,
+    dateKey,
+    cacheDir,
+    now: new Date(2026, 1, 21),
   });
 
   expect(loaded.fromCache).toBe(false);

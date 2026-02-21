@@ -59,10 +59,14 @@ test('formatMoneyReport supports legacy money_forward cache payloads', () => {
     },
   };
 
-  const output = formatMoneyReport(loaded);
-  expect(output).toContain('Source type: mf-dashboard-sqlite');
+  const output = formatMoneyReport(loaded, { locale: 'en' });
+  expect(output).not.toContain('money (');
+  expect(output).not.toContain('Provider:');
+  expect(output).not.toContain('Source type:');
+  expect(output).not.toContain('Cookie file:');
   expect(output).toContain('Source DB: /tmp/demo.db');
   expect(output).toContain('Assets: 1,000 JPY');
   expect(output).toContain('Liabilities: 500 JPY');
   expect(output).not.toContain('History URL:');
+  expect(output).not.toContain('Cash flow URL:');
 });

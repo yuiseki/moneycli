@@ -11,6 +11,28 @@ export type LoadMoneyOptions = {
   now?: Date;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function isCompatibleSnapshotForProvider(snapshot: MoneySnapshot, providerName: string): boolean {
+  if (providerName !== 'money_forward') {
+    return true;
+  }
+
+  if (!isRecord(snapshot.data)) {
+    return false;
+  }
+
+  if (snapshot.data.kind !== 'money_forward') {
+    return false;
+  }
+
+  const source = isRecord(snapshot.data.source) ? snapshot.data.source : null;
+  const sourceType = typeof source?.type === 'string' ? source.type : null;
+  return sourceType === 'money_forward_web';
+}
+
 export async function loadMoney(options: LoadMoneyOptions): Promise<LoadedMoney> {
   const now = options.now || new Date();
   const todayDateKey = formatDateKey(now);
@@ -18,8 +40,18 @@ export async function loadMoney(options: LoadMoneyOptions): Promise<LoadedMoney>
 
   const cacheRoot = getCacheDir(options.cacheDir);
   const cached = loadCache(cacheRoot, options.dateKey, options.provider.name);
+  const hasIncompatibleCache = Boolean(
+    cached && !isCompatibleSnapshotForProvider(cached, options.provider.name),
+  );
 
   if (!isToday && !options.forceSync) {
+    if (hasIncompatibleCache) {
+      throw new Error(
+        `Incompatible cache snapshot for ${options.dateKey} (${options.provider.name}). `
+        + `Run money sync --date ${options.dateKey} to refresh it.`,
+      );
+    }
+
     if (!cached) {
       throw new Error(`No cache snapshot for ${options.dateKey} (${options.provider.name}).`);
     }
@@ -32,7 +64,7 @@ export async function loadMoney(options: LoadMoneyOptions): Promise<LoadedMoney>
     };
   }
 
-  if (!options.forceSync && cached) {
+  if (!options.forceSync && cached && !hasIncompatibleCache) {
     return {
       fromCache: true,
       dateKey: options.dateKey,

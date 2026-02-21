@@ -2,17 +2,10 @@ import { detectLocale, localizedText, type AppLocale } from './i18n';
 import { type LoadedMoney } from './types';
 
 type FormatLabels = {
-  cache: string;
-  fresh: string;
   date: string;
-  provider: string;
   fetched: string;
   data: string;
-  sourceType: string;
-  cookieFile: string;
   sourceDb: string;
-  historyUrl: string;
-  cashFlowUrl: string;
   assets: string;
   liabilities: string;
   netWorth: string;
@@ -41,17 +34,10 @@ type FormatLabels = {
 
 function getFormatLabels(locale: AppLocale): FormatLabels {
   return {
-    cache: localizedText(locale, 'Cache', 'キャッシュ'),
-    fresh: localizedText(locale, 'Fresh', '最新取得'),
     date: localizedText(locale, 'Date', '日付'),
-    provider: localizedText(locale, 'Provider', 'プロバイダー'),
     fetched: localizedText(locale, 'Fetched', '取得時刻'),
     data: localizedText(locale, 'Data', 'データ'),
-    sourceType: localizedText(locale, 'Source type', 'データソース種別'),
-    cookieFile: localizedText(locale, 'Cookie file', 'Cookieファイル'),
     sourceDb: localizedText(locale, 'Source DB', 'ソースDB'),
-    historyUrl: localizedText(locale, 'History URL', '資産履歴URL'),
-    cashFlowUrl: localizedText(locale, 'Cash flow URL', '収支URL'),
     assets: localizedText(locale, 'Assets', '資産'),
     liabilities: localizedText(locale, 'Liabilities', '負債'),
     netWorth: localizedText(locale, 'Net worth', '純資産'),
@@ -126,9 +112,7 @@ export function formatMoneyReport(
   const labels = getFormatLabels(locale);
   const lines: string[] = [];
 
-  lines.push(`money (${loaded.fromCache ? labels.cache : labels.fresh})`);
   lines.push(`${labels.date}: ${loaded.dateKey}`);
-  lines.push(`${labels.provider}: ${loaded.provider}`);
   lines.push(`${labels.fetched}: ${loaded.snapshot.fetchedAt}`);
 
   if (!isMoneyForwardSnapshotData(loaded.snapshot.data)) {
@@ -140,28 +124,11 @@ export function formatMoneyReport(
 
   const data = loaded.snapshot.data;
   const source = isRecord(data.source) ? data.source : null;
-  const sourceType = readString(source?.type);
-  const sourceCookiePath = readString(source?.cookiePath);
   const sourceDbPath = readString(source?.dbPath);
-  const urls = isRecord(source?.urls) ? source.urls : null;
-  const historyListUrl = readString(urls?.historyList);
-  const cashFlowUrl = readString(urls?.cashFlow);
   const warnings = readWarnings(data.warnings);
 
-  if (sourceType) {
-    lines.push(`${labels.sourceType}: ${sourceType}`);
-  }
-  if (sourceCookiePath) {
-    lines.push(`${labels.cookieFile}: ${sourceCookiePath}`);
-  }
   if (sourceDbPath) {
     lines.push(`${labels.sourceDb}: ${sourceDbPath}`);
-  }
-  if (historyListUrl) {
-    lines.push(`${labels.historyUrl}: ${historyListUrl}`);
-  }
-  if (cashFlowUrl) {
-    lines.push(`${labels.cashFlowUrl}: ${cashFlowUrl}`);
   }
 
   lines.push('');

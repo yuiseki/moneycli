@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { config, setConfigOverrides, type MoneyCliConfig } from './config';
 import { parseDateOption } from './date';
 import { formatMoneyReport } from './format';
+import { detectLocale, localizedText, type AppLocale } from './i18n';
 import { loadMoney } from './money';
 import { loadProviderCatalog, resolveProvider, type ProviderCatalogEntry } from './providers/registry';
 
@@ -23,6 +24,50 @@ type SyncOptions = CommonOptions;
 type ProvidersOptions = {
   json?: boolean;
 };
+
+type CliMessages = {
+  optionDate: string;
+  optionProvider: string;
+  optionJson: string;
+  optionCacheDir: string;
+  optionSync: string;
+  programDescription: string;
+  listDescription: string;
+  syncDescription: string;
+  providersDescription: string;
+  syncCompleted: string;
+  labelDate: string;
+  labelProvider: string;
+  labelCacheDir: string;
+  labelDefaultProvider: string;
+  providersHeader: string;
+  sourceBuiltin: string;
+  sourceExternal: string;
+  errorPrefix: string;
+};
+
+function getCliMessages(locale: AppLocale): CliMessages {
+  return {
+    optionDate: localizedText(locale, 'Target date (default: today)', '対象日（デフォルト: 今日）'),
+    optionProvider: localizedText(locale, 'Provider name (default from config)', 'プロバイダー名（デフォルトは設定値）'),
+    optionJson: localizedText(locale, 'Output as JSON', 'JSON形式で出力'),
+    optionCacheDir: localizedText(locale, 'Override cache directory', 'キャッシュディレクトリを上書き'),
+    optionSync: localizedText(locale, 'Force provider fetch and overwrite cache', 'プロバイダーから強制取得してキャッシュを上書き'),
+    programDescription: localizedText(locale, 'Money CLI with provider plugins and date-based cache', 'プロバイダープラグインと日付キャッシュに対応した家計CLI'),
+    listDescription: localizedText(locale, 'Show money snapshot', '対象日のスナップショットを表示'),
+    syncDescription: localizedText(locale, 'Force provider fetch and write cache for the target date', '対象日をプロバイダーから強制取得してキャッシュ保存'),
+    providersDescription: localizedText(locale, 'List available providers', '利用可能なプロバイダー一覧を表示'),
+    syncCompleted: localizedText(locale, 'Sync completed.', '同期が完了しました。'),
+    labelDate: localizedText(locale, 'Date', '日付'),
+    labelProvider: localizedText(locale, 'Provider', 'プロバイダー'),
+    labelCacheDir: localizedText(locale, 'Cache dir', 'キャッシュディレクトリ'),
+    labelDefaultProvider: localizedText(locale, 'Default provider', 'デフォルトプロバイダー'),
+    providersHeader: localizedText(locale, 'Providers', 'プロバイダー一覧'),
+    sourceBuiltin: localizedText(locale, 'builtin', '内蔵'),
+    sourceExternal: localizedText(locale, 'external', '外部'),
+    errorPrefix: localizedText(locale, 'Error', 'エラー'),
+  };
+}
 
 function configureRuntimeOptions(options: {
   cacheDir?: string;
@@ -56,7 +101,10 @@ async function resolveActiveProvider(name?: string): Promise<{
   };
 }
 
-async function executeList(options: ListOptions): Promise<void> {
+async function executeList(
+  options: ListOptions,
+  locale: AppLocale,
+): Promise<void> {
   configureRuntimeOptions(options);
 
   const dateOption = parseDateOption(options.date);
@@ -83,10 +131,13 @@ async function executeList(options: ListOptions): Promise<void> {
     return;
   }
 
-  console.log(formatMoneyReport(loaded));
+  console.log(formatMoneyReport(loaded, { locale }));
 }
 
-async function executeSync(options: SyncOptions): Promise<void> {
+async function executeSync(
+  options: SyncOptions,
+  messages: CliMessages,
+): Promise<void> {
   configureRuntimeOptions(options);
 
   const dateOption = parseDateOption(options.date);
@@ -113,13 +164,13 @@ async function executeSync(options: SyncOptions): Promise<void> {
     return;
   }
 
-  console.log('Sync completed.');
-  console.log(`Date: ${payload.date}`);
-  console.log(`Provider: ${payload.provider}`);
-  console.log(`Cache dir: ${payload.cacheDir}`);
+  console.log(messages.syncCompleted);
+  console.log(`${messages.labelDate}: ${payload.date}`);
+  console.log(`${messages.labelProvider}: ${payload.provider}`);
+  console.log(`${messages.labelCacheDir}: ${payload.cacheDir}`);
 }
 
-async function executeProviders(options: ProvidersOptions): Promise<void> {
+async function executeProviders(options: ProvidersOptions, messages: CliMessages): Promise<void> {
   const catalog = await loadProviderCatalog(config);
   const payload = {
     defaultProvider: config.MONEYCLI_PROVIDER,
@@ -136,72 +187,81 @@ async function executeProviders(options: ProvidersOptions): Promise<void> {
     return;
   }
 
-  console.log(`Default provider: ${payload.defaultProvider}`);
-  console.log('Providers:');
+  console.log(`${messages.labelDefaultProvider}: ${payload.defaultProvider}`);
+  console.log(`${messages.providersHeader}:`);
   for (const provider of payload.providers) {
-    const sourceLabel = provider.source === 'builtin' ? 'builtin' : provider.modulePath || 'external';
+    const sourceLabel = provider.source === 'builtin'
+      ? messages.sourceBuiltin
+      : provider.modulePath || messages.sourceExternal;
     console.log(`- ${provider.name} (${sourceLabel}): ${provider.description}`);
   }
 }
 
-function configureCommonOptions(command: Command): Command {
+function configureCommonOptions(command: Command, messages: CliMessages): Command {
   return command
-    .option('-d, --date <yyyy-mm-dd>', 'Target date (default: today)')
-    .option('-p, --provider <name>', 'Provider name (default from config)')
-    .option('-j, --json', 'Output as JSON')
-    .option('--cache-dir <path>', 'Override cache directory');
+    .option('-d, --date <yyyy-mm-dd>', messages.optionDate)
+    .option('-p, --provider <name>', messages.optionProvider)
+    .option('-j, --json', messages.optionJson)
+    .option('--cache-dir <path>', messages.optionCacheDir);
 }
 
-function buildProgram(): Command {
+function buildProgram(locale: AppLocale, messages: CliMessages): Command {
   const program = new Command();
 
   program
     .name('money')
-    .description('Money CLI with provider plugins and date-based cache')
+    .description(messages.programDescription)
     .version('0.1.0');
 
   configureCommonOptions(
-    program.command('list', { isDefault: true }).alias('ls').description('Show money snapshot'),
+    program.command('list', { isDefault: true }).alias('ls').description(messages.listDescription),
+    messages,
   )
-    .option('--sync', 'Force provider fetch and overwrite cache')
+    .option('--sync', messages.optionSync)
     .action(async (options) => {
-      await executeList(options as ListOptions);
+      await executeList(options as ListOptions, locale);
     });
 
   configureCommonOptions(
     program
       .command('sync')
-      .description('Force provider fetch and write cache for the target date'),
+      .description(messages.syncDescription),
+    messages,
   ).action(async (options) => {
-    await executeSync(options as SyncOptions);
+    await executeSync(options as SyncOptions, messages);
   });
 
   program
     .command('providers')
-    .description('List available providers')
-    .option('-j, --json', 'Output as JSON')
+    .description(messages.providersDescription)
+    .option('-j, --json', messages.optionJson)
     .action(async (options) => {
-      await executeProviders(options as ProvidersOptions);
+      await executeProviders(options as ProvidersOptions, messages);
     });
 
   return program;
 }
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {
-  const program = buildProgram();
+  const locale = detectLocale();
+  const messages = getCliMessages(locale);
+  const program = buildProgram(locale, messages);
   await program.parseAsync(argv);
 }
 
 if (require.main === module) {
+  const locale = detectLocale();
+  const messages = getCliMessages(locale);
+
   runCli()
     .then(() => {
       process.exit(0);
     })
     .catch((error: unknown) => {
       if (error instanceof Error) {
-        console.error(`Error: ${error.message}`);
+        console.error(`${messages.errorPrefix}: ${error.message}`);
       } else {
-        console.error('Error:', error);
+        console.error(`${messages.errorPrefix}:`, error);
       }
       process.exit(1);
     });

@@ -3,6 +3,12 @@
 `moneycli` is a personal finance and asset CLI with switchable providers.
 The default provider is `money_forward`.
 
+## Requirements
+
+Node 22.12 or newer. That is where `require()` of an ES module landed, and
+commander ships as an ES module only. On anything older the CLI says so and
+exits rather than failing with a stack trace from inside `node_modules`.
+
 ## Install
 
 ```bash

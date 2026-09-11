@@ -31,6 +31,7 @@ type CliMessages = {
   optionJson: string;
   optionCacheDir: string;
   optionSync: string;
+  optionMcpServer: string;
   programDescription: string;
   listDescription: string;
   syncDescription: string;
@@ -53,6 +54,11 @@ function getCliMessages(locale: AppLocale): CliMessages {
     optionJson: localizedText(locale, 'Output as JSON', 'JSON形式で出力'),
     optionCacheDir: localizedText(locale, 'Override cache directory', 'キャッシュディレクトリを上書き'),
     optionSync: localizedText(locale, 'Force provider fetch and overwrite cache', 'プロバイダーから強制取得してキャッシュを上書き'),
+    optionMcpServer: localizedText(
+      locale,
+      'Run as a Model Context Protocol server over stdio (reads the cache, never fetches)',
+      'Model Context Protocol サーバーとして stdio で動作（キャッシュ読み取りのみ、取得はしない）',
+    ),
     programDescription: localizedText(locale, 'Money CLI with provider plugins and date-based cache', 'プロバイダープラグインと日付キャッシュに対応した家計CLI'),
     listDescription: localizedText(locale, 'Show money snapshot', '対象日のスナップショットを表示'),
     syncDescription: localizedText(locale, 'Force provider fetch and write cache for the target date', '対象日をプロバイダーから強制取得してキャッシュ保存'),
@@ -211,6 +217,7 @@ function buildProgram(locale: AppLocale, messages: CliMessages): Command {
   program
     .name('money')
     .description(messages.programDescription)
+    .option('--mcp-server', messages.optionMcpServer)
     .version('0.1.0');
 
   configureCommonOptions(
@@ -242,7 +249,30 @@ function buildProgram(locale: AppLocale, messages: CliMessages): Command {
   return program;
 }
 
+/**
+ * The MCP server is not a commander command: it owns stdout for the whole
+ * process, which does not fit inside an action that shares stdout with the
+ * usual human-readable output. The spellings a client is likely to be
+ * configured with all work.
+ */
+const MCP_INVOCATIONS = new Set(['--mcp-server', '--mcp', 'mcp-server', 'mcp']);
+
+function isMcpInvocation(argv: string[]): boolean {
+  const first = argv.slice(2)[0];
+  return first !== undefined && MCP_INVOCATIONS.has(first);
+}
+
 export async function runCli(argv: string[] = process.argv): Promise<void> {
+  if (isMcpInvocation(argv)) {
+    // Required lazily: the MCP SDK is a large import that every other command
+    // would otherwise pay for at startup.
+    const { runMcpServer } = require('./mcp') as typeof import('./mcp');
+    await runMcpServer();
+    // The server owns the process from here; returning would exit it.
+    await new Promise<never>(() => {});
+    return;
+  }
+
   const locale = detectLocale();
   const messages = getCliMessages(locale);
   const program = buildProgram(locale, messages);

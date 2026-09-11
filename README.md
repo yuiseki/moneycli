@@ -51,12 +51,62 @@ Primary output fields include:
 
 - Latest asset history by group
 - Asset, liability, and net-worth totals (when available)
-- Monthly cash-flow summary
+- Monthly cash-flow summary, and the individual entries behind it: what was
+  bought and what came in, with the category and the account for each
 - Account status counts
+
+Transfers between the user's own accounts are recorded but kept apart from
+spending, because Money Forward leaves them out of the monthly totals.
+
+One caveat about dates: a GET of `moneyforward.com/cf` ignores `from`, `to`,
+`year` and `month` and always answers with the current month. Syncing a past
+day therefore files this month's cash flow under that day, and the snapshot
+carries a warning saying so. The asset and liability figures are not affected.
 
 Environment variables:
 
 - `MONEYFORWARD_COOKIE_PATH`: Path to the Money Forward cookie JSON file
+
+## MCP server
+
+```bash
+money --mcp-server
+```
+
+Serves Model Context Protocol over stdio, from the CLI itself, so it reads the
+same cache and the same configuration as every other `money` command.
+
+It never fetches. Money Forward is reached only with the user's live session
+cookies, so syncing stays a deliberate act (`money sync`, or a cron) rather
+than something a model decides to do. Every tool is annotated `readOnlyHint`
+and `openWorldHint: false`, and those annotations are enforced by the code
+rather than promised: see `docs/ADR/004-mcp-server.md`.
+
+| Tool | Answers |
+| --- | --- |
+| `money_days` | Which days are cached at all. Ask first when a question is about a date. |
+| `money_snapshot` | Assets, liabilities, net worth, the month's totals and account health on one day. |
+| `money_transactions` | What was bought and what came in, filterable by kind and by text. |
+| `money_breakdown` | Which bank, card or holding each balance sits in. |
+| `money_history` | How the totals moved across the cached days. |
+
+A day that was never synced is an error that names the days that were, so a
+client can correct a guessed date in one step instead of reading an empty
+report as a quiet day.
+
+Example client configuration:
+
+```json
+{
+  "mcpServers": {
+    "moneycli": {
+      "command": "money",
+      "args": ["--mcp-server"],
+      "env": { "MONEYCLI_CACHE_DIR": "/home/you/.cache/moneycli" }
+    }
+  }
+}
+```
 
 ## Provider plugins
 

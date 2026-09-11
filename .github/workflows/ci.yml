@@ -93,3 +93,43 @@ jobs:
             echo 'expected a missing cached day to fail'
             exit 1
           fi
+
+      # The MCP server pulls in the largest dependency the CLI has, and it is
+      # only reached through --mcp-server, so --help alone would not notice a
+      # missing one. The handshake also proves the tool list, which is the
+      # part a client configures against.
+      - name: The MCP server answers a handshake under that install
+        run: |
+          cd /tmp/smoke
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"money_snapshot","arguments":{"date":"1970-01-01"}}}' \
+            | MONEYCLI_CACHE_DIR=/tmp/smoke/cache timeout 30 ./node_modules/.bin/money --mcp-server > handshake.jsonl
+          cat handshake.jsonl
+          grep -q '"name":"moneycli"' handshake.jsonl
+          grep -q '"money_days"' handshake.jsonl
+          grep -q '"money_snapshot"' handshake.jsonl
+          grep -q '"money_transactions"' handshake.jsonl
+          grep -q '"money_breakdown"' handshake.jsonl
+          grep -q '"money_history"' handshake.jsonl
+          # The seeded 1970 day comes back through the tool, not just the CLI.
+          grep -q '1200' handshake.jsonl
+
+      # The server must not be able to reach Money Forward at all. If a fetch
+      # ever creeps back in, this is where it shows up.
+      - name: The MCP server declares itself read-only and closed-world
+        run: |
+          cd /tmp/smoke
+          node -e "
+            const fs = require('fs');
+            const lines = fs.readFileSync('handshake.jsonl', 'utf8').trim().split('\n').map(JSON.parse);
+            const tools = lines.find((m) => m.id === 2).result.tools;
+            if (tools.length === 0) throw new Error('no tools listed');
+            for (const tool of tools) {
+              if (tool.annotations?.readOnlyHint !== true) throw new Error(tool.name + ' is not readOnly');
+              if (tool.annotations?.openWorldHint !== false) throw new Error(tool.name + ' is not closed-world');
+            }
+            console.log(tools.length + ' tools, all read-only and closed-world');
+          "

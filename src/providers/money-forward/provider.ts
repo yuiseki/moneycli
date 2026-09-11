@@ -2,6 +2,12 @@ import { type MoneyCliConfig } from '../../config';
 import { type MoneyProvider } from '../types';
 import { parseJapaneseYen, stripTags } from './html';
 import {
+  fetchMonthlyCashFlowPage,
+  parseCashFlowTransactions,
+  parseMonthlyCashFlow,
+  type MoneyForwardTransaction,
+} from './cash-flow';
+import {
   MONEYFORWARD_BASE_URL,
   fetchHtmlWithCookies,
   loadCookieFile,
@@ -20,22 +26,6 @@ export interface MoneyForwardGroupSnapshot {
   isCurrent: boolean;
   lastScrapedAt: string | null;
   latestAssetHistory: MoneyForwardAssetHistory | null;
-}
-
-/** One row of moneyforward.com/cf: a purchase, or money coming in. */
-export interface MoneyForwardTransaction {
-  id: string | null;
-  date: string | null;
-  content: string | null;
-  amount: number;
-  account: string | null;
-  largeCategory: string | null;
-  middleCategory: string | null;
-  isIncome: boolean;
-  /** A move between the user's own accounts, which Money Forward greys out. */
-  isTransfer: boolean;
-  /** Money Forward's is_target flag: whether the monthly totals include it. */
-  countedInTotals: boolean;
 }
 
 export interface MoneyForwardSnapshotData {
@@ -224,116 +214,6 @@ function parseHistoryDetailRows(html: string): Array<{
   }
 
   return rows;
-}
-
-/**
- * The named entities Money Forward actually emits in a transaction row.
- * stripTags only collapses whitespace, and a shop name with an ampersand in
- * it would otherwise reach the report as `&amp;`.
- */
-function decodeEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
-}
-
-function cellText(row: string, className: string): string | null {
-  const pattern = new RegExp(
-    `<td[^>]*class="[^"]*\\b${className}\\b[^"]*"[^>]*>([\\s\\S]*?)</td>`,
-    'i',
-  );
-  const match = row.match(pattern);
-  if (!match) return null;
-  const text = decodeEntities(stripTags(match[1] || ''));
-  return text.length > 0 ? text : null;
-}
-
-function hiddenFieldValue(row: string, field: string): string | null {
-  const pattern = new RegExp(`<input[^>]*name="user_asset_act\\[${field}\\]"[^>]*>`, 'i');
-  const match = row.match(pattern);
-  if (!match) return null;
-  const value = match[0].match(/\bvalue="([^"]*)"/i);
-  return value ? value[1] : null;
-}
-
-/**
- * One line of the household ledger: what was bought, or what came in.
- *
- * `countedInTotals` is Money Forward's own `is_target` flag. A transfer
- * between the user's own accounts is greyed out on the page and left out of
- * the monthly totals, so treating it as spending would overstate the month by
- * the size of every investment contribution. The counted rows add up to
- * exactly what the monthly total row claims, which is how this parser is
- * checked.
- */
-export function parseCashFlowTransactions(html: string): MoneyForwardTransaction[] {
-  const rows = html.match(/<tr[^>]*id="js-transaction-[^"]*"[^>]*>[\s\S]*?<\/tr>/g) || [];
-
-  return rows.map((row) => {
-    const id = (row.match(/id="js-transaction-([^"]+)"/) || [])[1] ?? null;
-    const sortable = row.match(/<td[^>]*class="[^"]*\bdate\b[^"]*"[^>]*data-table-sortable-value="(\d{4})\/(\d{2})\/(\d{2})/i);
-    const amountCell = row.match(/<td[^>]*class="[^"]*\bamount\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i);
-    const amountText = amountCell ? amountCell[1] : '';
-
-    // A transfer is marked two ways on the page, and only one of them is
-    // reliable on its own, so either is enough.
-    const isTransfer = /\(振替\)/.test(stripTags(amountText))
-      || /<tr[^>]*class="[^"]*\bmf-grayout\b/.test(row);
-
-    return {
-      id,
-      date: sortable ? `${sortable[1]}-${sortable[2]}-${sortable[3]}` : null,
-      content: cellText(row, 'content'),
-      amount: parseJapaneseYen(amountText),
-      account: cellText(row, 'note'),
-      largeCategory: cellText(row, 'lctg'),
-      middleCategory: cellText(row, 'mctg'),
-      isIncome: hiddenFieldValue(row, 'is_income') === '1',
-      isTransfer,
-      countedInTotals: hiddenFieldValue(row, 'is_target') === '1',
-    };
-  });
-}
-
-function parseMonthlyCashFlow(html: string, fallbackMonth: string): {
-  month: string;
-  totalIncome: number;
-  totalExpense: number;
-  balance: number;
-  transactionCount: number;
-} {
-  const rowMatch = html.match(
-    /<tr[^>]*class="js-monthly_total"[^>]*>([\s\S]*?)<\/tr>/i,
-  );
-
-  const tdValues: string[] = [];
-  if (rowMatch) {
-    const tdPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    for (const tdMatch of rowMatch[1].matchAll(tdPattern)) {
-      tdValues.push(tdMatch[1] || '');
-    }
-  }
-
-  const income = parseJapaneseYen(tdValues[0] || '0');
-  const expense = parseJapaneseYen(tdValues[2] || '0');
-  const balance = parseJapaneseYen(tdValues[4] || String(income - expense));
-
-  const transactionCount = (html.match(/id="js-transaction-/g) || []).length;
-  const dateLabelMatch = html.match(
-    /<span[^>]*class="yyyy-mm-dd"[^>]*>([0-9]{4}-[0-9]{2}-[0-9]{2})<\/span>/i,
-  );
-  const month = dateLabelMatch ? dateLabelMatch[1].slice(0, 7) : fallbackMonth;
-
-  return {
-    month,
-    totalIncome: income,
-    totalExpense: expense,
-    balance,
-    transactionCount,
-  };
 }
 
 function parseLiabilityTotal(html: string): number | null {
@@ -557,6 +437,10 @@ export function createMoneyForwardProvider(config: MoneyCliConfig): MoneyProvide
         liability,
         accounts,
       });
+    },
+
+    async fetchMonth(context) {
+      return fetchMonthlyCashFlowPage(config, context.monthKey, context.now);
     },
   };
 }

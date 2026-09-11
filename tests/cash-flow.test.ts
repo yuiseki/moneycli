@@ -7,7 +7,11 @@
  * the ones asserted below.
  */
 import { expect, test } from 'vitest';
-import { parseCashFlowTransactions } from '../src/providers/money-forward/provider';
+import {
+  isMonthKey,
+  parseCashFlowTransactions,
+  parseMonthRange,
+} from '../src/providers/money-forward/cash-flow';
 
 /** One row of the transaction table, with the fields the parser reads. */
 function row(options: {
@@ -154,4 +158,21 @@ test('the counted rows add up to what the monthly total row claims', () => {
 
 test('a page with no transaction rows yields nothing rather than throwing', () => {
   expect(parseCashFlowTransactions('<html><body><p>no rows</p></body></html>')).toEqual([]);
+});
+
+test('the month on display is read from the page header', () => {
+  expect(parseMonthRange('<h2>2026/03/01 - 2026/03/31</h2>')).toEqual({
+    from: '2026-03-01',
+    to: '2026-03-31',
+  });
+  expect(parseMonthRange('<h2>no dates here</h2>')).toBeNull();
+});
+
+test('a month key is yyyy-mm, and the month has to exist', () => {
+  expect(isMonthKey('2026-03')).toBe(true);
+  expect(isMonthKey('2026-12')).toBe(true);
+  expect(isMonthKey('2026-13')).toBe(false);
+  expect(isMonthKey('2026-00')).toBe(false);
+  expect(isMonthKey('2026-3')).toBe(false);
+  expect(isMonthKey('2026-03-01')).toBe(false);
 });

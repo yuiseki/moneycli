@@ -7,6 +7,7 @@ import { formatMoneyReport } from './format';
 import { detectLocale, localizedText, type AppLocale } from './i18n';
 import { loadMoney } from './money';
 import { loadProviderCatalog, resolveProvider, type ProviderCatalogEntry } from './providers/registry';
+import { registerCfCommand } from './commands/cf';
 
 type CommonOptions = {
   date?: string;
@@ -32,6 +33,12 @@ type CliMessages = {
   optionCacheDir: string;
   optionSync: string;
   optionMcpServer: string;
+  cfDescription: string;
+  optionMonth: string;
+  optionFrom: string;
+  optionTo: string;
+  optionCfSync: string;
+  optionCfList: string;
   programDescription: string;
   listDescription: string;
   syncDescription: string;
@@ -59,6 +66,20 @@ function getCliMessages(locale: AppLocale): CliMessages {
       'Run as a Model Context Protocol server over stdio (reads the cache, never fetches)',
       'Model Context Protocol サーバーとして stdio で動作（キャッシュ読み取りのみ、取得はしない）',
     ),
+    cfDescription: localizedText(
+      locale,
+      'Show a month of income and spending from the cache, or fetch one with --sync',
+      '月次の収入・支出をキャッシュから表示（--sync で取得）',
+    ),
+    optionMonth: localizedText(locale, 'Target month (default: this month)', '対象月（デフォルト: 今月）'),
+    optionFrom: localizedText(locale, 'Earliest month to fetch, with --sync', '--sync で取得する最初の月'),
+    optionTo: localizedText(locale, 'Latest month to fetch, with --sync', '--sync で取得する最後の月'),
+    optionCfSync: localizedText(
+      locale,
+      'Fetch from the provider and write the month cache',
+      'プロバイダーから取得して月次キャッシュに保存',
+    ),
+    optionCfList: localizedText(locale, 'List the cached months', 'キャッシュ済みの月を一覧表示'),
     programDescription: localizedText(locale, 'Money CLI with provider plugins and date-based cache', 'プロバイダープラグインと日付キャッシュに対応した家計CLI'),
     listDescription: localizedText(locale, 'Show money snapshot', '対象日のスナップショットを表示'),
     syncDescription: localizedText(locale, 'Force provider fetch and write cache for the target date', '対象日をプロバイダーから強制取得してキャッシュ保存'),
@@ -237,6 +258,8 @@ function buildProgram(locale: AppLocale, messages: CliMessages): Command {
   ).action(async (options) => {
     await executeSync(options as SyncOptions, messages);
   });
+
+  registerCfCommand(program, locale, messages);
 
   program
     .command('providers')

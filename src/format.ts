@@ -305,3 +305,121 @@ export function formatMoneyReport(
 
   return lines.join('\n');
 }
+
+type MonthLabels = {
+  month: string;
+  status: string;
+  provisional: string;
+  confirmed: string;
+  fetched: string;
+  staleNotice: string;
+  monthsHeader: string;
+  noMonths: string;
+};
+
+function getMonthLabels(locale: AppLocale): MonthLabels {
+  return {
+    month: localizedText(locale, 'Month', '対象月'),
+    status: localizedText(locale, 'Status', '状態'),
+    provisional: localizedText(locale, 'provisional', '暫定'),
+    confirmed: localizedText(locale, 'confirmed', '確定'),
+    fetched: localizedText(locale, 'Fetched', '取得時刻'),
+    staleNotice: localizedText(
+      locale,
+      'This was fetched while the month was still running, and the month has since '
+      + 'closed. Re-run with --sync for the final figures.',
+      'これは対象月がまだ進行中のときに取得したもので、その後その月は終わっています。'
+      + '確定値を得るには --sync で取り直してください。',
+    ),
+    monthsHeader: localizedText(locale, 'Cached months', 'キャッシュ済みの月'),
+    noMonths: localizedText(
+      locale,
+      "No month is cached yet. Run 'money cf --sync' to fetch one.",
+      'まだ月次キャッシュがありません。money cf --sync で取得してください。',
+    ),
+  };
+}
+
+export type FormatMonthOptions = {
+  locale?: AppLocale;
+  staleProvisional?: boolean;
+};
+
+/** One month of income and spending, with the rows behind it. */
+export function formatMonthReport(
+  record: {
+    month: string;
+    status: string;
+    fetchedAt: string;
+    data: {
+      range: { from: string; to: string } | null;
+      totals: {
+        totalIncome: number;
+        totalExpense: number;
+        balance: number;
+        transactionCount: number;
+      };
+      transactions: unknown;
+      warnings: string[];
+    };
+  },
+  options: FormatMonthOptions = {},
+): string {
+  const locale = options.locale || detectLocale();
+  const labels = getFormatLabels(locale);
+  const monthLabels = getMonthLabels(locale);
+  const lines: string[] = [];
+
+  const range = record.data.range;
+  const rangeLabel = range ? ` (${range.from} .. ${range.to})` : '';
+  const statusLabel = record.status === 'confirmed'
+    ? monthLabels.confirmed
+    : monthLabels.provisional;
+
+  lines.push(`${monthLabels.month}: ${record.month}${rangeLabel}`);
+  lines.push(`${monthLabels.status}: ${statusLabel}`);
+  lines.push(`${monthLabels.fetched}: ${record.fetchedAt}`);
+
+  if (options.staleProvisional) {
+    lines.push('');
+    lines.push(monthLabels.staleNotice);
+  }
+
+  lines.push('');
+  lines.push(`- ${labels.income}: ${formatAmount(record.data.totals.totalIncome, locale, labels)}`);
+  lines.push(`- ${labels.expense}: ${formatAmount(record.data.totals.totalExpense, locale, labels)}`);
+  lines.push(`- ${labels.balance}: ${formatAmount(record.data.totals.balance, locale, labels)}`);
+  lines.push(`- ${labels.transactions}: ${record.data.totals.transactionCount}`);
+
+  for (const section of formatTransactionSections(record.data.transactions, locale, labels)) {
+    lines.push('');
+    lines.push(...section);
+  }
+
+  if (record.data.warnings.length > 0) {
+    lines.push('');
+    lines.push(labels.warnings);
+    for (const warning of record.data.warnings) lines.push(`- ${warning}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function formatMonthList(
+  months: Array<{ month: string; status: string }>,
+  options: FormatMonthOptions = {},
+): string {
+  const locale = options.locale || detectLocale();
+  const monthLabels = getMonthLabels(locale);
+
+  if (months.length === 0) return monthLabels.noMonths;
+
+  const lines = [`${monthLabels.monthsHeader}: ${months.length}`];
+  for (const row of months) {
+    const statusLabel = row.status === 'confirmed'
+      ? monthLabels.confirmed
+      : monthLabels.provisional;
+    lines.push(`- ${row.month}  ${statusLabel}`);
+  }
+  return lines.join('\n');
+}

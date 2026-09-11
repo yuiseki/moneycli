@@ -30,6 +30,7 @@ type FormatLabels = {
   na: string;
   unknownValue: string;
   currency: string;
+  transfers: string;
 };
 
 function getFormatLabels(locale: AppLocale): FormatLabels {
@@ -62,6 +63,7 @@ function getFormatLabels(locale: AppLocale): FormatLabels {
     na: 'N/A',
     unknownValue: localizedText(locale, 'unknown', '不明'),
     currency: 'JPY',
+    transfers: localizedText(locale, 'Transfers (not counted)', '振替（集計対象外）'),
   };
 }
 
@@ -81,6 +83,7 @@ type MoneyForwardLikeData = {
   source?: unknown;
   totals?: unknown;
   monthlyCashFlow?: unknown;
+  cashFlowTransactions?: unknown;
   accountStatuses?: unknown;
   warnings?: unknown;
 };
@@ -98,6 +101,102 @@ function readString(value: unknown): string | null {
 function readWarnings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+type CashFlowTransaction = {
+  date: string | null;
+  content: string | null;
+  amount: number;
+  account: string | null;
+  largeCategory: string | null;
+  middleCategory: string | null;
+  isIncome: boolean;
+  isTransfer: boolean;
+  countedInTotals: boolean;
+};
+
+function readTransactions(value: unknown): CashFlowTransaction[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter(isRecord).map((row) => ({
+    date: readString(row.date),
+    content: readString(row.content),
+    amount: typeof row.amount === 'number' && Number.isFinite(row.amount) ? row.amount : 0,
+    account: readString(row.account),
+    largeCategory: readString(row.largeCategory),
+    middleCategory: readString(row.middleCategory),
+    isIncome: row.isIncome === true,
+    isTransfer: row.isTransfer === true,
+    countedInTotals: row.countedInTotals === true,
+  }));
+}
+
+/** yyyy-mm-dd as the mm/dd the ledger is read by. */
+function shortDate(value: string | null, labels: FormatLabels): string {
+  if (!value) return labels.na;
+  const match = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return match ? `${match[1]}/${match[2]}` : value;
+}
+
+function formatTransactionLine(
+  entry: CashFlowTransaction,
+  locale: AppLocale,
+  labels: FormatLabels,
+): string {
+  const categories = [entry.largeCategory, entry.middleCategory].filter(
+    (part): part is string => Boolean(part),
+  );
+  const parts = [
+    shortDate(entry.date, labels),
+    entry.content || labels.unknownValue,
+    formatAmount(entry.amount, locale, labels),
+  ];
+  if (categories.length > 0) parts.push(`[${categories.join(' / ')}]`);
+  if (entry.account) parts.push(entry.account);
+
+  return `- ${parts.join('  ')}`;
+}
+
+/**
+ * What was bought and what came in, as three lists.
+ *
+ * Transfers are kept apart rather than filed under spending: Money Forward
+ * leaves them out of the monthly totals, and a list that mixed them in would
+ * overstate the month by the size of every investment contribution.
+ *
+ * A cache written before the rows were kept has none of this, and then the
+ * whole block is omitted instead of printing three empty headings.
+ */
+function formatTransactionSections(
+  value: unknown,
+  locale: AppLocale,
+  labels: FormatLabels,
+): string[][] {
+  const transactions = readTransactions(value);
+  if (transactions.length === 0) return [];
+
+  const sections: string[][] = [];
+  const groups: Array<{ heading: string; rows: CashFlowTransaction[] }> = [
+    {
+      heading: labels.income,
+      rows: transactions.filter((entry) => entry.isIncome && !entry.isTransfer),
+    },
+    {
+      heading: labels.expense,
+      rows: transactions.filter((entry) => !entry.isIncome && !entry.isTransfer),
+    },
+    { heading: labels.transfers, rows: transactions.filter((entry) => entry.isTransfer) },
+  ];
+
+  for (const group of groups) {
+    if (group.rows.length === 0) continue;
+    sections.push([
+      group.heading,
+      ...group.rows.map((entry) => formatTransactionLine(entry, locale, labels)),
+    ]);
+  }
+
+  return sections;
 }
 
 export type FormatMoneyReportOptions = {
@@ -159,6 +258,11 @@ export function formatMoneyReport(
   lines.push(
     `- ${labels.transactions}: ${typeof monthlyCashFlow?.transactionCount === 'number' ? monthlyCashFlow.transactionCount : labels.na}`,
   );
+
+  for (const section of formatTransactionSections(data.cashFlowTransactions, locale, labels)) {
+    lines.push('');
+    lines.push(...section);
+  }
 
   lines.push('');
   lines.push(labels.accountStatus);

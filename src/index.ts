@@ -249,20 +249,31 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
   await program.parseAsync(argv);
 }
 
-if (require.main === module) {
+/**
+ * The entry point, with the exit codes and the error message a shell expects.
+ *
+ * It is separate from `runCli` so that bin/money.js can reach it after its
+ * Node version check: under the wrapper `require.main` is the wrapper, not
+ * this module, so the guard below never fires there.
+ */
+export async function main(argv: string[] = process.argv): Promise<void> {
   const locale = detectLocale();
   const messages = getCliMessages(locale);
 
-  runCli()
-    .then(() => {
-      process.exit(0);
-    })
-    .catch((error: unknown) => {
-      if (error instanceof Error) {
-        console.error(`${messages.errorPrefix}: ${error.message}`);
-      } else {
-        console.error(`${messages.errorPrefix}:`, error);
-      }
-      process.exit(1);
-    });
+  try {
+    await runCli(argv);
+    process.exit(0);
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      console.error(`${messages.errorPrefix}: ${error.message}`);
+    } else {
+      console.error(`${messages.errorPrefix}:`, error);
+    }
+    process.exit(1);
+  }
+}
+
+// Still works when dist/index.js is run directly, as it was before bin/.
+if (require.main === module) {
+  void main();
 }

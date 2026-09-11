@@ -4,10 +4,11 @@
   "description": "Money CLI with provider plugins and date-based cache",
   "main": "dist/index.js",
   "bin": {
-    "money": "dist/index.js",
-    "moneycli": "dist/index.js"
+    "money": "bin/money.js",
+    "moneycli": "bin/money.js"
   },
   "files": [
+    "bin",
     "dist",
     "README.md",
     "docs"
@@ -32,6 +33,9 @@
   ],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "commonjs",
   "dependencies": {
     "commander": "^15.0.0",

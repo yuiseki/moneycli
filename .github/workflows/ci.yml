@@ -114,6 +114,8 @@ jobs:
           grep -q '"money_transactions"' handshake.jsonl
           grep -q '"money_breakdown"' handshake.jsonl
           grep -q '"money_history"' handshake.jsonl
+          grep -q '"money_months"' handshake.jsonl
+          grep -q '"money_cash_flow"' handshake.jsonl
           # The seeded 1970 day comes back through the tool, not just the CLI.
           grep -q '1200' handshake.jsonl
 

@@ -32,6 +32,31 @@ money --help
 - `money sync`: Fetch data for a target date from the provider and update cache
 - `money providers`: Show available providers
 
+### Monthly cash flow
+
+```bash
+money cf                          # this month, from the cache
+money cf --month 2026-03          # one month
+money cf --list                   # which months are cached, and their status
+money cf --sync --month 2026-03   # fetch one month
+money cf --sync --from 2026-01 --to 2026-09   # backfill a range
+```
+
+A month is **provisional** until the following month has begun, and
+**confirmed** after that. A card charge posts days after the purchase, so the
+total for the month you are standing in keeps moving: 2026-03 read on the
+11th was 48 entries and 259,448 yen; the same month read after it closed was
+122 entries and 631,276 yen. Reading back a provisional month that has since
+closed tells you to re-sync.
+
+Months are cached separately from days, under
+`<cache-root>/months/YYYY-MM/<provider>/data.json`, because a month of
+spending is not a property of a day.
+
+Fetching is explicit. Reading never touches the network, and `--sync` costs
+three requests per month against the provider, so a backfill walks one month
+at a time with a pause between them.
+
 ### Date and cache behavior
 
 - The default target date is today.
@@ -59,9 +84,11 @@ Transfers between the user's own accounts are recorded but kept apart from
 spending, because Money Forward leaves them out of the monthly totals.
 
 One caveat about dates: a GET of `moneyforward.com/cf` ignores `from`, `to`,
-`year` and `month` and always answers with the current month. Syncing a past
-day therefore files this month's cash flow under that day, and the snapshot
-carries a warning saying so. The asset and liability figures are not affected.
+`year` and `month` and always answers with whatever month the session is on.
+Syncing a past day therefore files this month's cash flow under that day, and
+the snapshot carries a warning saying so. The asset and liability figures are
+not affected. To read an earlier month, use `money cf`, which moves the
+session with a POST first.
 
 Environment variables:
 
@@ -89,6 +116,8 @@ rather than promised: see `docs/ADR/004-mcp-server.md`.
 | `money_transactions` | What was bought and what came in, filterable by kind and by text. |
 | `money_breakdown` | Which bank, card or holding each balance sits in. |
 | `money_history` | How the totals moved across the cached days. |
+| `money_months` | Which months of cash flow are cached, and whether each is final. |
+| `money_cash_flow` | A whole month of income and spending, with the entries behind it. |
 
 A day that was never synced is an error that names the days that were, so a
 client can correct a guessed date in one step instead of reading an empty

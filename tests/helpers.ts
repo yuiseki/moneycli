@@ -213,3 +213,69 @@ export function toolJson(response: McpResponse): any {
 export function toolText(response: McpResponse): string {
   return response.result.content[0].text;
 }
+
+export type MonthFixture = {
+  month: string;
+  status?: 'provisional' | 'confirmed';
+  fetchedAt?: string;
+  totalIncome?: number;
+  totalExpense?: number;
+  transactions?: TransactionFixture[];
+  warnings?: string[];
+};
+
+/** Writes one month of cash flow into the cache, in the layout the CLI reads. */
+export function writeMonth(
+  cacheDir: string,
+  fixture: MonthFixture,
+  provider = 'money_forward',
+): void {
+  const dir = path.join(cacheDir, 'months', fixture.month, provider);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const transactions = (fixture.transactions ?? []).map((entry) => ({
+    id: entry.id,
+    date: entry.date,
+    content: entry.content,
+    amount: entry.amount,
+    account: entry.account ?? null,
+    largeCategory: entry.largeCategory ?? null,
+    middleCategory: entry.middleCategory ?? null,
+    isIncome: entry.isIncome ?? false,
+    isTransfer: entry.isTransfer ?? false,
+    countedInTotals: entry.countedInTotals ?? !entry.isTransfer,
+  }));
+
+  const income = fixture.totalIncome ?? 0;
+  const expense = fixture.totalExpense ?? 0;
+
+  fs.writeFileSync(
+    path.join(dir, 'data.json'),
+    JSON.stringify(
+      {
+        version: 1,
+        provider,
+        month: fixture.month,
+        fetchedAt: fixture.fetchedAt ?? `${fixture.month}-15T00:00:00.000Z`,
+        status: fixture.status ?? 'confirmed',
+        data: {
+          kind: 'money_forward_month',
+          month: fixture.month,
+          range: { from: `${fixture.month}-01`, to: `${fixture.month}-28` },
+          totals: {
+            month: fixture.month,
+            totalIncome: income,
+            totalExpense: expense,
+            balance: income - expense,
+            transactionCount: transactions.length,
+          },
+          transactions,
+          warnings: fixture.warnings ?? [],
+        },
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+}

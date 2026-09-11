@@ -8,6 +8,7 @@ import {
   runMcp,
   toolJson,
   toolText,
+  writeMonth,
   writeSnapshot,
   type Workspace,
 } from './helpers';
@@ -77,8 +78,10 @@ test('the server introduces itself and lists read-only tools', async () => {
   expect(initialize.serverInfo.version).toBe(require('../package.json').version);
   expect(tools.map((tool: any) => tool.name).sort()).toEqual([
     'money_breakdown',
+    'money_cash_flow',
     'money_days',
     'money_history',
+    'money_months',
     'money_snapshot',
     'money_transactions',
   ]);
@@ -280,4 +283,141 @@ test('each tool call is announced on stderr, leaving stdout to the protocol', as
   const { stderr } = await runMcp(ws, [{ name: 'money_days' }]);
 
   expect(stderr).toContain('[money-mcp] money_days ok');
+});
+
+function seedMonths(ws: Workspace): void {
+  writeMonth(ws.cacheDir, {
+    month: '2026-03',
+    status: 'confirmed',
+    totalIncome: 450_116,
+    totalExpense: 631_276,
+    transactions: [
+      {
+        id: 'm1',
+        date: '2026-03-20',
+        content: '振込 サンプル給与',
+        amount: 450_116,
+        account: 'サンプル銀行',
+        largeCategory: '収入',
+        middleCategory: '給与',
+        isIncome: true,
+      },
+      {
+        id: 'm2',
+        date: '2026-03-04',
+        content: 'サンプル書店',
+        amount: -6_880,
+        account: 'サンプルカード VISA',
+        largeCategory: '教養・教育',
+        middleCategory: '書籍',
+      },
+    ],
+  });
+  writeMonth(ws.cacheDir, {
+    month: '2026-09',
+    status: 'provisional',
+    totalIncome: 0,
+    totalExpense: 70_669,
+  });
+}
+
+test('money_months reports each month with whether it is final', async () => {
+  const ws = createTempWorkspace();
+  seedMonths(ws);
+  const { responses } = await runMcp(ws, [{ name: 'money_months' }]);
+
+  expect(toolJson(responses[0])).toMatchObject({
+    month_count: 2,
+    first_month: '2026-03',
+    latest_month: '2026-09',
+    months: [
+      { month: '2026-03', status: 'confirmed' },
+      { month: '2026-09', status: 'provisional' },
+    ],
+  });
+});
+
+test('money_cash_flow returns a whole month, defaulting to the latest', async () => {
+  const ws = createTempWorkspace();
+  seedMonths(ws);
+  const { responses } = await runMcp(ws, [
+    { name: 'money_cash_flow' },
+    { name: 'money_cash_flow', arguments: { month: '2026-03' } },
+  ]);
+
+  expect(toolJson(responses[0]).month).toBe('2026-09');
+  const march = toolJson(responses[1]);
+  expect(march.totals.totalIncome).toBe(450_116);
+  expect(march.totals.totalExpense).toBe(631_276);
+  expect(march.status).toBe('confirmed');
+  expect(march.match_count).toBe(2);
+});
+
+test('money_cash_flow filters a month by kind and by text', async () => {
+  const ws = createTempWorkspace();
+  seedMonths(ws);
+  const { responses } = await runMcp(ws, [
+    { name: 'money_cash_flow', arguments: { month: '2026-03', kind: 'income' } },
+    { name: 'money_cash_flow', arguments: { month: '2026-03', query: '書籍' } },
+    { name: 'money_cash_flow', arguments: { month: '2026-03', limit: 0 } },
+  ]);
+
+  expect(toolJson(responses[0]).transactions.map((row: any) => row.id)).toEqual(['m1']);
+  expect(toolJson(responses[1]).transactions.map((row: any) => row.id)).toEqual(['m2']);
+  // limit 0 is the totals without the rows, which is the cheap way to ask.
+  const totalsOnly = toolJson(responses[2]);
+  expect(totalsOnly.transactions).toEqual([]);
+  expect(totalsOnly.match_count).toBe(2);
+});
+
+/**
+ * The stored status was true when it was written. A month fetched while it
+ * was running and read back after it closed is stale, and quoting it as the
+ * month's spending would understate it.
+ */
+test('a provisional month whose month has closed says it is not final', async () => {
+  const ws = createTempWorkspace();
+  writeMonth(ws.cacheDir, {
+    month: '2026-01',
+    status: 'provisional',
+    fetchedAt: '2026-01-15T00:00:00.000Z',
+    totalExpense: 1_000,
+  });
+  const { responses } = await runMcp(ws, [{ name: 'money_cash_flow', arguments: { month: '2026-01' } }]);
+  const payload = toolJson(responses[0]);
+
+  expect(payload.status).toBe('provisional');
+  expect(payload.note).toContain('not the final figures');
+  expect(payload.note).toContain('2026-01');
+});
+
+test('a month that was never synced is an error naming the months that were', async () => {
+  const ws = createTempWorkspace();
+  seedMonths(ws);
+  const { responses } = await runMcp(ws, [
+    { name: 'money_cash_flow', arguments: { month: '2020-01' } },
+  ]);
+
+  expect(responses[0].result.isError).toBe(true);
+  expect(toolText(responses[0])).toContain('2020-01 was never synced');
+  expect(toolText(responses[0])).toContain('2026-03');
+});
+
+test('an empty month cache says to sync rather than reporting no spending', async () => {
+  const ws = createTempWorkspace();
+  const { responses } = await runMcp(ws, [{ name: 'money_cash_flow' }]);
+
+  expect(responses[0].result.isError).toBe(true);
+  expect(toolText(responses[0])).toContain("Run 'money cf --sync' first.");
+});
+
+test('a malformed month is refused', async () => {
+  const ws = createTempWorkspace();
+  seedMonths(ws);
+  const { responses } = await runMcp(ws, [
+    { name: 'money_cash_flow', arguments: { month: '2026-13' } },
+  ]);
+
+  expect(responses[0].result.isError).toBe(true);
+  expect(toolText(responses[0])).toContain('is not a month');
 });

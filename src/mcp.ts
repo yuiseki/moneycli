@@ -24,6 +24,12 @@ import {
   listCachedDays,
   loadSnapshot,
 } from './services/snapshots';
+import {
+  isMonthConfirmed,
+  listCachedMonths,
+  loadMonth,
+  type MonthRecord,
+} from './services/months';
 import { type MoneySnapshot } from './types';
 
 function serverVersion(): string {
@@ -156,6 +162,72 @@ function readTransactions(snapshot: MoneySnapshot): Transaction[] {
 function snapshotField(snapshot: MoneySnapshot, key: string): unknown {
   const data = isRecord(snapshot.data) ? snapshot.data : null;
   return data ? data[key] : undefined;
+}
+
+function validMonthKey(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})$/);
+  const month = match ? Number(match[2]) : 0;
+  if (!match || month < 1 || month > 12) {
+    throw new Error(`'${value}' is not a month. Pass it as yyyy-mm.`);
+  }
+  return value;
+}
+
+/**
+ * A cached month, or the newest one when none is named.
+ *
+ * As with days, nothing is fetched, so a month that was never synced is an
+ * error naming the months that were rather than a report of no spending.
+ */
+function requireMonth(month: string | undefined): MonthRecord {
+  const provider = providerName();
+  const root = cacheDir();
+  const cached = listCachedMonths(root, provider);
+
+  const monthKey = month === undefined
+    ? cached[cached.length - 1]?.month
+    : validMonthKey(month);
+
+  if (monthKey === undefined) {
+    throw new Error(
+      `No month of cash flow has been synced for ${provider} yet. `
+      + "Run 'money cf --sync' first.",
+    );
+  }
+
+  const record = loadMonth(root, monthKey, provider);
+  if (!record) {
+    throw new Error(
+      `${monthKey} was never synced for ${provider}.`
+      + (cached.length > 0
+        ? ` Cached months: ${cached.map((row) => row.month).join(', ')}.`
+        : ' Nothing is cached yet.'),
+    );
+  }
+
+  return record;
+}
+
+/**
+ * Whether a stored month is still the final word.
+ *
+ * The status was recorded when it was fetched. A month fetched while it was
+ * running, which has since closed, is stale in a way the record cannot know,
+ * and a client that reported it as this month's spending would be wrong.
+ */
+function monthFreshness(record: MonthRecord, now: Date) {
+  const staleProvisional = record.status === 'provisional' && isMonthConfirmed(record.month, now);
+  return {
+    status: record.status,
+    fetched_at: record.fetchedAt,
+    ...(staleProvisional
+      ? {
+          note:
+            'Fetched while the month was still running, and the month has since closed. '
+            + `These are not the final figures; run 'money cf --sync --month ${record.month}'.`,
+        }
+      : {}),
+  };
 }
 
 export function createMcpServer(): McpServer {
@@ -396,6 +468,98 @@ export function createMcpServer(): McpServer {
         net_worth_change:
           first && last && first !== last ? (last.net_worth as number) - (first.net_worth as number) : null,
         days: rows,
+      });
+    }),
+  );
+
+  server.registerTool(
+    'money_months',
+    {
+      title: 'Which months of cash flow are cached',
+      description:
+        'The months of income and spending held locally, oldest first, each marked '
+        + 'provisional or confirmed. A month is confirmed once the following month '
+        + 'has begun; before that the figures still move, because card charges post '
+        + 'days after the purchase. Ask this before quoting a month total.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    logged('money_months', async () => {
+      const provider = providerName();
+      const months = listCachedMonths(cacheDir(), provider);
+      return asJsonResult({
+        provider,
+        month_count: months.length,
+        first_month: months[0]?.month ?? null,
+        latest_month: months[months.length - 1]?.month ?? null,
+        months,
+      });
+    }),
+  );
+
+  server.registerTool(
+    'money_cash_flow',
+    {
+      title: 'A whole month of income and spending',
+      description:
+        'One month\'s income, spending and balance, with the entries behind them. '
+        + 'This is the tool for what a month cost, as opposed to money_snapshot, '
+        + 'which reports the month only as far as the day it was synced. Check the '
+        + 'status: a provisional month is not final and will grow.',
+      inputSchema: {
+        month: z
+          .string()
+          .optional()
+          .describe('The month, as yyyy-mm. Omit for the most recent cached month'),
+        kind: z
+          .enum(['all', 'income', 'expense', 'transfer'])
+          .default('all')
+          .describe('Which entries to return'),
+        query: z
+          .string()
+          .optional()
+          .describe('Only entries whose description, category or account contains this text'),
+        limit: z
+          .number()
+          .int()
+          .min(0)
+          .max(2000)
+          .default(200)
+          .describe('Most entries to return. 0 returns the totals with no entries'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    logged('money_cash_flow', async ({ month, kind, query, limit }) => {
+      const record = requireMonth(month);
+      const all = (record.data.transactions ?? []) as Transaction[];
+
+      const byKind = all.filter((entry) => {
+        if (kind === 'all') return true;
+        if (kind === 'transfer') return entry.isTransfer;
+        if (entry.isTransfer) return false;
+        return kind === 'income' ? entry.isIncome : !entry.isIncome;
+      });
+
+      const needle = query?.trim().toLowerCase();
+      const matched = needle
+        ? byKind.filter((entry) =>
+            [entry.content, entry.largeCategory, entry.middleCategory, entry.account]
+              .filter((part): part is string => Boolean(part))
+              .some((part) => part.toLowerCase().includes(needle)),
+          )
+        : byKind;
+
+      return asJsonResult({
+        month: record.month,
+        range: record.data.range,
+        ...monthFreshness(record, new Date()),
+        currency: 'JPY',
+        totals: record.data.totals,
+        kind,
+        ...(needle ? { query: query?.trim() } : {}),
+        match_count: matched.length,
+        transactions: matched.slice(0, limit),
+        warnings: record.data.warnings ?? [],
       });
     }),
   );

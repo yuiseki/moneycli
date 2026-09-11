@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Node 20 went end of life on 2026-04-30. These are the lines that
+        # are still supported, and the floor in package.json engines is 22.12,
+        # where require() of an ES module landed.
+        node: ['22.x', '24.x', '26.x']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx vitest run
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+      - run: npm ci
+      - name: Pack the published tarball
+        run: |
+          mkdir -p /tmp/pack
+          npm pack --pack-destination /tmp/pack
+
+      # Installed without hoisting, so the CLI can only resolve the
+      # dependencies it declares itself. A module that happens to be pulled in
+      # by vitest or by another dependency today is not available here.
+      - name: Install the tarball with no hoisting
+        run: |
+          mkdir -p /tmp/smoke
+          cd /tmp/smoke
+          npm init -y
+          npm install --omit=dev --install-strategy=nested /tmp/pack/*.tgz
+
+      - name: The packed CLI runs on its declared dependencies alone
+        run: |
+          cd /tmp/smoke
+          ./node_modules/.bin/money --help
+          ./node_modules/.bin/moneycli --help
+
+      # Provider resolution is the one thing that happens before any network
+      # call or any cookie, so it is the part of the CLI a packed install can
+      # be held to without an account.
+      - name: The builtin provider resolves under that install
+        run: |
+          cd /tmp/smoke
+          ./node_modules/.bin/money providers -j | tee providers.json
+          grep -q '"money_forward"' providers.json
+
+      # Reading a day back out of the cache exercises the date parsing, the
+      # snapshot validation and the report formatter, none of which --help
+      # reaches. A seeded 1970 day gives them one without an account.
+      - name: A cached day formats under that install
+        run: |
+          cd /tmp/smoke
+          mkdir -p /tmp/smoke/cache/1970/01/01/money_forward
+          printf '%s' '{"version":1,"provider":"money_forward","dateKey":"1970-01-01","fetchedAt":"1970-01-01T00:00:00.000Z","data":{"kind":"money_forward","source":{"type":"money_forward_web"},"groups":[],"totals":{"assets":1234,"liabilities":34,"netWorth":1200,"asOfDate":"1970-01-01"}}}' \
+            > /tmp/smoke/cache/1970/01/01/money_forward/data.json
+          ./node_modules/.bin/money --date 1970-01-01 --cache-dir /tmp/smoke/cache | tee report.txt
+          grep -q '1,234 JPY' report.txt
+          grep -q '1,200 JPY' report.txt
+          ./node_modules/.bin/money --date 1970-01-01 --cache-dir /tmp/smoke/cache -j | tee report.json
+          grep -q '"fromCache": true' report.json
+
+      # A day with nothing cached must fail rather than quietly print an empty
+      # report, because a past date is cache-only by design.
+      - name: A day with no cache fails
+        run: |
+          cd /tmp/smoke
+          if ./node_modules/.bin/money --date 1970-01-02 --cache-dir /tmp/smoke/cache; then
+            echo 'expected a missing cached day to fail'
+            exit 1
+          fi

@@ -1,6 +1,5 @@
 import fs from 'fs';
 import { type MoneyCliConfig } from '../../config';
-import { parseDateKey } from '../../date';
 import { type MoneyProvider } from '../types';
 
 export interface MoneyForwardAssetHistory {
@@ -16,6 +15,22 @@ export interface MoneyForwardGroupSnapshot {
   isCurrent: boolean;
   lastScrapedAt: string | null;
   latestAssetHistory: MoneyForwardAssetHistory | null;
+}
+
+/** One row of moneyforward.com/cf: a purchase, or money coming in. */
+export interface MoneyForwardTransaction {
+  id: string | null;
+  date: string | null;
+  content: string | null;
+  amount: number;
+  account: string | null;
+  largeCategory: string | null;
+  middleCategory: string | null;
+  isIncome: boolean;
+  /** A move between the user's own accounts, which Money Forward greys out. */
+  isTransfer: boolean;
+  /** Money Forward's is_target flag: whether the monthly totals include it. */
+  countedInTotals: boolean;
 }
 
 export interface MoneyForwardSnapshotData {
@@ -48,6 +63,8 @@ export interface MoneyForwardSnapshotData {
     balance: number;
     transactionCount: number;
   };
+  /** The rows behind monthlyCashFlow: what was bought, and what came in. */
+  cashFlowTransactions: MoneyForwardTransaction[];
   accountStatuses: {
     total: number;
     ok: number;
@@ -361,6 +378,78 @@ function parseHistoryDetailRows(html: string): Array<{
   return rows;
 }
 
+/**
+ * The named entities Money Forward actually emits in a transaction row.
+ * stripTags only collapses whitespace, and a shop name with an ampersand in
+ * it would otherwise reach the report as `&amp;`.
+ */
+function decodeEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function cellText(row: string, className: string): string | null {
+  const pattern = new RegExp(
+    `<td[^>]*class="[^"]*\\b${className}\\b[^"]*"[^>]*>([\\s\\S]*?)</td>`,
+    'i',
+  );
+  const match = row.match(pattern);
+  if (!match) return null;
+  const text = decodeEntities(stripTags(match[1] || ''));
+  return text.length > 0 ? text : null;
+}
+
+function hiddenFieldValue(row: string, field: string): string | null {
+  const pattern = new RegExp(`<input[^>]*name="user_asset_act\\[${field}\\]"[^>]*>`, 'i');
+  const match = row.match(pattern);
+  if (!match) return null;
+  const value = match[0].match(/\bvalue="([^"]*)"/i);
+  return value ? value[1] : null;
+}
+
+/**
+ * One line of the household ledger: what was bought, or what came in.
+ *
+ * `countedInTotals` is Money Forward's own `is_target` flag. A transfer
+ * between the user's own accounts is greyed out on the page and left out of
+ * the monthly totals, so treating it as spending would overstate the month by
+ * the size of every investment contribution. The counted rows add up to
+ * exactly what the monthly total row claims, which is how this parser is
+ * checked.
+ */
+export function parseCashFlowTransactions(html: string): MoneyForwardTransaction[] {
+  const rows = html.match(/<tr[^>]*id="js-transaction-[^"]*"[^>]*>[\s\S]*?<\/tr>/g) || [];
+
+  return rows.map((row) => {
+    const id = (row.match(/id="js-transaction-([^"]+)"/) || [])[1] ?? null;
+    const sortable = row.match(/<td[^>]*class="[^"]*\bdate\b[^"]*"[^>]*data-table-sortable-value="(\d{4})\/(\d{2})\/(\d{2})/i);
+    const amountCell = row.match(/<td[^>]*class="[^"]*\bamount\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i);
+    const amountText = amountCell ? amountCell[1] : '';
+
+    // A transfer is marked two ways on the page, and only one of them is
+    // reliable on its own, so either is enough.
+    const isTransfer = /\(振替\)/.test(stripTags(amountText))
+      || /<tr[^>]*class="[^"]*\bmf-grayout\b/.test(row);
+
+    return {
+      id,
+      date: sortable ? `${sortable[1]}-${sortable[2]}-${sortable[3]}` : null,
+      content: cellText(row, 'content'),
+      amount: parseJapaneseYen(amountText),
+      account: cellText(row, 'note'),
+      largeCategory: cellText(row, 'lctg'),
+      middleCategory: cellText(row, 'mctg'),
+      isIncome: hiddenFieldValue(row, 'is_income') === '1',
+      isTransfer,
+      countedInTotals: hiddenFieldValue(row, 'is_target') === '1',
+    };
+  });
+}
+
 function parseMonthlyCashFlow(html: string, fallbackMonth: string): {
   month: string;
   totalIncome: number;
@@ -449,10 +538,6 @@ function parseAccountStatuses(html: string): {
   };
 }
 
-function toDatePathPart(value: string): string {
-  return value.replace(/-/g, '/');
-}
-
 function buildMoneyForwardSnapshot(
   config: MoneyCliConfig,
   dateKey: string,
@@ -538,6 +623,18 @@ function buildMoneyForwardSnapshot(
 
   const monthKey = dateKey.slice(0, 7);
   const monthlyCashFlow = parseMonthlyCashFlow(pages.cashFlow.html, monthKey);
+  const cashFlowTransactions = parseCashFlowTransactions(pages.cashFlow.html);
+
+  // A GET of /cf always answers with the current month, whatever from, to,
+  // year and month are set to in the query. Syncing a past day therefore
+  // files this month's ledger under that day, and the only honest thing to
+  // do is say so rather than let the月 label imply otherwise.
+  if (monthlyCashFlow.month !== monthKey) {
+    warnings.push(
+      `Cash flow is ${monthlyCashFlow.month}, not ${monthKey}: moneyforward.com/cf `
+      + 'only serves the current month.',
+    );
+  }
 
   return {
     kind: 'money_forward',
@@ -563,6 +660,7 @@ function buildMoneyForwardSnapshot(
       refreshCompleted: null,
     },
     monthlyCashFlow,
+    cashFlowTransactions,
     accountStatuses: parseAccountStatuses(pages.accounts.html),
     breakdown: detailRows,
     warnings,
@@ -576,15 +674,13 @@ function buildUrls(dateKey: string): {
   liability: string;
   accounts: string;
 } {
-  const parts = parseDateKey(dateKey);
-  const from = `${parts.year}/${parts.month}/01`;
-  const to = toDatePathPart(dateKey);
-
   return {
     history: `${MONEYFORWARD_BASE_URL}/bs/history`,
     historyList: `${MONEYFORWARD_BASE_URL}/bs/history/list/${dateKey}`,
-    cashFlow:
-      `${MONEYFORWARD_BASE_URL}/cf?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    // No query string: /cf ignores from, to, year and month on a GET and
+    // answers with the current month regardless, so parameters here only
+    // record a range that was never applied.
+    cashFlow: `${MONEYFORWARD_BASE_URL}/cf`,
     liability: `${MONEYFORWARD_BASE_URL}/bs/liability`,
     accounts: `${MONEYFORWARD_BASE_URL}/accounts`,
   };

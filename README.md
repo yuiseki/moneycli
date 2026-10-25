@@ -5,9 +5,10 @@ The default provider is `money_forward`.
 
 ## Requirements
 
-Node 22.12 or newer. That is where `require()` of an ES module landed, and
-commander ships as an ES module only. On anything older the CLI says so and
-exits rather than failing with a stack trace from inside `node_modules`.
+Node 22.23.4, 24.22.1, or 26.12.1 or newer within those release lines. These
+minimum versions include the October 2026 Node.js security fixes. On an older
+version the CLI says so and exits rather than failing with a stack trace from
+inside `node_modules`.
 
 ## Install
 
